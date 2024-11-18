@@ -6,19 +6,27 @@ import { replicateRxCollection } from 'rxdb/plugins/replication';
 import { Subject } from 'rxjs';
 import { NativeEventSource, EventSourcePolyfill } from 'event-source-polyfill';
 import { getRxStorageDexie } from 'rxdb/plugins/storage-dexie';
+import { wrappedKeyEncryptionCryptoJsStorage } from 'rxdb/plugins/encryption-crypto-js';
+
+const encryptedDexieStorage = wrappedKeyEncryptionCryptoJsStorage({
+  storage: getRxStorageDexie()
+});
 
 let dbPromise = null;
 const createDB = async () => {
   const db = await createRxDatabase({
     name: 'rxdb-sample',
-    storage: getRxStorageDexie(),
-    cleanupPolicy: { 
-      minimumDeletedTime: 1000 , // one month, 
+    storage: encryptedDexieStorage,
+    password: 'sudoLetMeIn',
+    ignoreDuplicate: true,
+    cleanupPolicy: {
+      minimumDeletedTime: 1000, // one month, 
       minimumCollectionAge: 1000, // 60 seconds 
-      runEach: 1000 , // 5 minutes 
-      awaitReplicationsInSync: true, 
+      runEach: 1000, // 5 minutes 
+      awaitReplicationsInSync: true,
       waitForLeadership: true
-    }
+    },
+
   });
 
   const todoSchema = {
@@ -59,21 +67,29 @@ const createDB = async () => {
       list_id: {
         type: 'string',
         ref: 'todos'
-      }, 
+      },
     },
     required: ['id', 'list_id'],
+    encrypted: ['description'],
   }
 
 
   await db.addCollections({
     todos: {
       schema: todoSchema
-    },  
+    },
     list: {
       schema: listSchema
     },
   });
 
+  await db.list.insert({
+    id: (+ new Date()).toString(),
+    description: 'enkripsi -----',
+    list_id: '123asdfg'
+  });
+
+  
   return db;
 }
 const initialState = {
@@ -99,6 +115,7 @@ const urlDev = !urlDani ? urlDani : urlSort;
 
 function App() {
   const [show, setSHow] = useState(true);
+  const [leader, setLeader] = useState(false);
   const [data, setData] = useState([]);
   const [formState, setFormState] = useState(initialState);
   const [formupdate, setFormUpdate] = useState(initialState);
@@ -121,7 +138,7 @@ function App() {
     formState.id = (+ new Date()).toString();
     await db.todos.insert(formState);
     await db.list.insert({
-      id : formState.id,
+      id: formState.id,
       description: 'referral -----',
       list_id: formState.id
     });
@@ -158,6 +175,8 @@ function App() {
 
       setData(results)
     });
+    console.log(await db.list.find().exec());
+
     // stop watching this query
     return () => {
       querySub.unsubscribe()
@@ -178,7 +197,7 @@ function App() {
     const db = await getDB();
     const doc = await db.list.findOne(data.id).exec();
     console.log(doc);
-    
+
     const todo = await doc.populate('list_id');
     console.log(todo);
   }
@@ -202,7 +221,7 @@ function App() {
 
       eventSource.addEventListener("error", (e) => {
         console.log(e);
-        
+
         myPullStream$.next("RESYNC")
 
       });
@@ -250,8 +269,18 @@ function App() {
 
   const getReplica = async () => {
     const db = await getDB();
+    db.waitForLeadership()
+      .then(() => {
+        console.log('Long lives the king!'); // <- runs when db becomes leader
+        setLeader(true);
+      });
     replication(db);
   }
+
+  useEffect(() => {
+    document.title = leader ? 'leader' : 'instance';
+    
+  }, [leader]);
 
   useEffect(() => {
     subscribe();
