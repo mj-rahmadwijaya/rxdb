@@ -32,7 +32,6 @@ const createDB = async () => {
       },
       name: {
         type: 'string',
-        ref: 'todos'
       },
       done: {
         type: 'boolean'
@@ -43,13 +42,36 @@ const createDB = async () => {
       }
     },
     required: ['id', 'name', 'done', 'timestamp'],
-
   }
+
+  const listSchema = {
+    version: 0,
+    primaryKey: 'id',
+    type: 'object',
+    properties: {
+      id: {
+        type: 'string',
+        maxLength: 100 // <- the primary key must have set maxLength
+      },
+      description: {
+        type: 'string',
+      },
+      list_id: {
+        type: 'string',
+        ref: 'todos'
+      }, 
+    },
+    required: ['id', 'list_id'],
+  }
+
 
   await db.addCollections({
     todos: {
       schema: todoSchema
-    }
+    },  
+    list: {
+      schema: listSchema
+    },
   });
 
   return db;
@@ -98,6 +120,11 @@ function App() {
     const db = await getDB();
     formState.id = (+ new Date()).toString();
     await db.todos.insert(formState);
+    await db.list.insert({
+      id : formState.id,
+      description: 'referral -----',
+      list_id: formState.id
+    });
     setFormState(initialState)
   }
 
@@ -149,11 +176,11 @@ function App() {
 
   const handleDetail = async (data) => {
     const db = await getDB();
-    const doc = await db.todos.findOne(data.id).exec();
+    const doc = await db.list.findOne(data.id).exec();
     console.log(doc);
-
-    const name = await doc.populate('name');
-    console.log(name);
+    
+    const todo = await doc.populate('list_id');
+    console.log(todo);
   }
 
 
