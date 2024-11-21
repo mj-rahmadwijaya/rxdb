@@ -19,10 +19,11 @@ const createDB = async () => {
     storage: encryptedDexieStorage,
     password: 'sudoLetMeIn',
     ignoreDuplicate: true,
+    localDocuments: true,
     cleanupPolicy: {
-      minimumDeletedTime: 1000, // one month, 
-      minimumCollectionAge: 1000, // 60 seconds 
-      runEach: 1000, // 5 minutes 
+      minimumDeletedTime: 10000, // one month, 
+      minimumCollectionAge: 10000, // 60 seconds 
+      runEach: 10000, // 5 minutes 
       awaitReplicationsInSync: true,
       waitForLeadership: true
     },
@@ -79,7 +80,8 @@ const createDB = async () => {
       schema: todoSchema
     },
     list: {
-      schema: listSchema
+      schema: listSchema,
+      localDocuments: true
     },
   });
 
@@ -88,6 +90,12 @@ const createDB = async () => {
     description: 'enkripsi -----',
     list_id: '123asdfg'
   });
+
+  await db.list.insertLocal('localPride', {
+    id: (+ new Date()).toString(),
+    description: 'local pride',
+  });
+
 
   
   return db;
@@ -171,15 +179,22 @@ function App() {
     const db = await getDB();
     const query = db.todos.find();
     const querySub = query.$.subscribe(results => {
-      console.log(results);
 
       setData(results)
     });
-    console.log(await db.list.find().exec());
+    // console.log(await db.list.find().exec());
 
+    const localDoc = await db.list.getLocal('localPride');
+    console.log(localDoc);
+    console.log(localDoc.get('description'));
+    
+    const subscription = db.list.getLocal$('localPride').subscribe(documentOrNull => {
+      console.dir(documentOrNull); // > RxLocalDocument or null
+    });
     // stop watching this query
     return () => {
       querySub.unsubscribe()
+      subscription.unsubscribe()
     }
   }
 
@@ -332,6 +347,30 @@ function App() {
 
   }
 
+  const setStates = async () => {
+    const db = await getDB();
+    const myState = await db.addState();
+    await myState.set('initState', v => 'value state bla bla bal------');
+    const val = myState.get();
+    console.log(val);
+    const valstate = myState.get('initState');
+    console.log(valstate);
+
+    const observable = myState.get$('initState');
+    observable.subscribe(newValue => {
+      console.log('New value:', newValue);
+    });
+  }
+  const handleSetState = async () => {
+    const db = await getDB();
+    const myState = await db.addState();
+    await myState.set('initState', v => 'change value state bla bla bal------');
+  }
+
+  useEffect(() => {
+    setStates()
+  }, []);
+
   return (
     <>
       <div>
@@ -343,6 +382,9 @@ function App() {
         </span>
         <span>
           <button onClick={() => handleClean()}>Clean</button>
+        </span>
+        <span>
+          <button onClick={() => handleSetState()}>State</button>
         </span>
       </div>
       <div>

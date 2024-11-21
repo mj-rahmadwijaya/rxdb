@@ -6,6 +6,11 @@ import { addRxPlugin } from 'rxdb';
 import { RxDBDevModePlugin } from 'rxdb/plugins/dev-mode';
 import { RxDBCleanupPlugin } from 'rxdb/plugins/cleanup';
 import { RxDBLeaderElectionPlugin } from 'rxdb/plugins/leader-election';
+import { RxDBStatePlugin } from 'rxdb/plugins/state';
+import { RxDBLocalDocumentsPlugin } from 'rxdb/plugins/local-documents';
+
+addRxPlugin(RxDBLocalDocumentsPlugin);
+addRxPlugin(RxDBStatePlugin);
 addRxPlugin(RxDBCleanupPlugin);
 addRxPlugin(RxDBDevModePlugin);
 addRxPlugin(RxDBLeaderElectionPlugin);
