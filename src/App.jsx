@@ -7,6 +7,7 @@ import { Subject } from 'rxjs';
 import { NativeEventSource, EventSourcePolyfill } from 'event-source-polyfill';
 import { getRxStorageDexie } from 'rxdb/plugins/storage-dexie';
 import { wrappedKeyEncryptionCryptoJsStorage } from 'rxdb/plugins/encryption-crypto-js';
+import { replicateGraphQL } from 'rxdb/plugins/replication-graphql';
 
 const encryptedDexieStorage = wrappedKeyEncryptionCryptoJsStorage({
   storage: getRxStorageDexie()
@@ -31,93 +32,37 @@ const createDB = async () => {
 
   const todoSchema = {
     version: 0,
-    primaryKey: 'id',
-    type: 'object',
+    primaryKey: "id",
+    type: "object",
     properties: {
       id: {
-        type: 'string',
-        maxLength: 100 // <- the primary key must have set maxLength
+        type: "string",
+        maxLength: 100, // <- the primary key must have set maxLength
       },
       name: {
-        type: 'string',
+        type: "string",
       },
-      done: {
-        type: 'boolean'
-      },
-      timestamp: {
-        type: 'string',
-        format: 'date-time'
-      }
-    },
-    required: ['id', 'name', 'done', 'timestamp'],
-  }
-
-  const listSchema = {
-    version: 0,
-    primaryKey: 'id',
-    type: 'object',
-    properties: {
-      id: {
-        type: 'string',
-        maxLength: 100 // <- the primary key must have set maxLength
-      },
-      description: {
-        type: 'string',
-      },
-      list_id: {
-        type: 'string',
-        ref: 'todos'
+      updatedAt: {
+        type: "string",
+        format: "date-time",
       },
     },
-    required: ['id', 'list_id'],
-    encrypted: ['description'],
-  }
-
-  const localSchema = {
-    version: 0,
-    primaryKey: 'id',
-    type: 'object',
-    properties: {
-      id: {
-        type: 'string',
-        maxLength: 100 // <- the primary key must have set maxLength
-      },
-      description: {
-        type: 'string',
-      }, 
-    },
-    required: ['id', ]
-  }
+    required: ["id"],
+    encrypted: ["name"],
+  };
 
   await db.addCollections({
     todos: {
       schema: todoSchema
-    },
-    list: {
-      schema: listSchema,
-    },
-    locals: {
-      schema: localSchema,
-      localDocuments: true
-    },
+    }, 
   });
-
-  await db.list.insert({
-    id: (+ new Date()).toString(),
-    description: 'enkripsi -----',
-    list_id: '123asdfg'
-  });
-
-  
-
-
 
   return db;
 }
 const initialState = {
   "name": "",
-  "done": false,
-  "timestamp": + new Date(),
+  "deleted": false,
+  "updatedAt": + new Date(),
 }
 
 const urlDani = {
@@ -132,6 +77,12 @@ const urlSort = {
   "stream": "https://sort.my.id/rxdb/pull_stream",
   "login": "https://sort.my.id/login",
 }
+
+const urlGraphql = {
+  url: "https://fhjg2jorrbfm3atgef64guuqma.appsync-api.us-east-2.amazonaws.com/graphql",
+  wss: "wss://fhjg2jorrbfm3atgef64guuqma.appsync-realtime-api.us-east-2.amazonaws.com/graphql",
+  token: "da2-zwxailbg3vdq3cdsrfcrkve3me",
+};
 
 const urlDev = !urlDani ? urlDani : urlSort;
 
@@ -159,11 +110,6 @@ function App() {
     const db = await getDB();
     formState.id = (+ new Date()).toString();
     await db.todos.insert(formState);
-    await db.list.insert({
-      id: formState.id,
-      description: 'referral -----',
-      list_id: formState.id
-    });
     setFormState(initialState)
   }
 
@@ -193,7 +139,8 @@ function App() {
     const db = await getDB();
     const query = db.todos.find();
     const querySub = query.$.subscribe(results => {
-
+      console.log(results);
+      
       setData(results)
     });
     // console.log(await db.list.find().exec());
@@ -224,69 +171,89 @@ function App() {
   }
 
 
-  const replication = (collection) => {
-    const myPullStream$ = new Subject();
-    if (localStorage.getItem('token')) {
-      var eventSource = new EventSourcePolyfill(urlDev.stream, {
-        headers: {
-          'Authorization': localStorage.getItem('token')
+  const pullQueryBuilder = () => {
+    const query = `query PullTodos {
+      pullTodo{
+          checkpoint {
+            updatedAt
+            id
+          }
+          documents {
+            id
+            name
+            updatedAt
+            deleted
+          }
         }
-      });
-      eventSource.addEventListener("message", (event) => {
-        const eventData = JSON.parse(event.data);
-        myPullStream$.next({
-          documents: eventData.documents,
-          checkpoint: eventData.checkpoint,
-        });
-      });
+      }`;
+    return {
+      query,
+      operationName: "PullTodos",
+      variables: null,
+    };
+  };
 
-      eventSource.addEventListener("error", (e) => {
-        console.log(e);
+  const pushMutationBuilder = (rows) => {
+    // Ensure rows is always an array
+    const rowsArray = Array.isArray(rows) ? rows : [rows];
 
-        myPullStream$.next("RESYNC")
+    const query = `mutation PushTodo($writeRows: [TodoInputPushRow!]!) {
+      pushTodo(rows: $writeRows) {
+        id
+        name
+        updatedAt
+        deleted
+      }
+    }`;
 
-      });
-    }
+    const variables = {
+      writeRows: rowsArray, // Use the wrapped array
+    };
 
-    replicateRxCollection({
-      collection: collection.todos,
+    return {
+      query,
+      operationName: "PushTodo",
+      variables,
+    };
+  };
+
+  const replication = async () => {
+    const db = await getDB();
+
+    replicateGraphQL({
+      collection: db.todos,
+      url: {
+        http: urlGraphql.url,
+        ws: urlGraphql.wss,
+      }, 
+      headers: {
+        "x-api-key": urlGraphql.token,
+      },
       push: {
-        async handler(body) {
-          const response = await fetch(urlDev.push + '/push', {
-            method: 'POST',
-            headers: {
-              'Accept': 'application/json',
-              'Content-Type': 'application/json',
-              'Authorization': localStorage.getItem('token'),
-            },
-            body: JSON.stringify(body)
-          });
-
-          const data = await response.json();
-          console.log(data);
-          return data;
-        }
+        queryBuilder: pushMutationBuilder,
       },
       pull: {
-        async handler(checkpointOrNull, batchSize) {
-          const response = await fetch(urlDev.pull + '/pull', {
-            method: 'GET',
-            headers: {
-              'Accept': 'application/json',
-              'Content-Type': 'application/json',
-              'Authorization': localStorage.getItem('token'),
-            },
-          });
-          const data = await response.json();
-          return {
-            documents: data.documents,
-            checkpoint: data.checkpoint
-          };
+        queryBuilder: pullQueryBuilder,
+        includeWsHeaders: true,
+        wsOptions: {
+          retryAttempts: 10,
         },
-        stream$: myPullStream$.asObservable()
-      }
+      },
+      deletedField: "deleted",
+      live: true,
     });
-  }
+
+    // // emits each document that was received from the remote
+    // replicateState.received$.subscribe((doc) => console.dir(doc));
+
+    // // emits each document that was send to the remote
+    // replicateState.sent$.subscribe((doc) => console.dir(doc));
+
+    // // emits all errors that happen when running the push- & pull-handlers.
+    // replicateState.error$.subscribe((error) => console.dir(error));
+  };
+
+
 
   const getReplica = async () => {
     const db = await getDB();
@@ -437,9 +404,9 @@ function App() {
             <span>
               <button onClick={() => handleCLickUpdate(item)}>update</button>
             </span>
-            <span>
+            {/* <span>
               <button onClick={() => handleDetail(item)}>detail</button>
-            </span>
+            </span> */}
             <span>
               <button onClick={() => handleDelete(item)}>delete</button>
             </span>
